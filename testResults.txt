@@ -1,0 +1,76 @@
+
+------------------------
+Looking for source files
+------------------------
+
+Found: secret.c secret.h
+
+------------------------------
+Attempting to build the driver
+------------------------------
+
+mkdir tmpdir.42825
+/bin/gcc -Wall -fpic -g -m32 -I/home/pn-cs453/lib/asgn4//testlib/include  -include pln.h -o tmpdir.42825/secret.o -c -Dmain=test453main -Dprintf=dt_printf  secret.c
+/bin/gcc -Wall -fpic -g -m32 -I/home/pn-cs453/lib/asgn4//testlib/include  -include pln.h -shared -o tmpdir.42825/lib/libsubmitted.so tmpdir.42825/secret.o
+
+--------------------------------
+Checking for long lines (no program should have any lines > 80 chars)
+--------------------------------
+
+Line length ok.
+
+
+---------------
+checking for tmpdir.42825/lib/libsubmitted.so
+---------------
+
+
+--------------------------------------------------------
+Test Results:
+   These are the results of trying your Secret Keeper
+against several programs with different characteristics 
+described by the filename.  The output of your program
+is compared to a reference output using diff(1).  If they
+differ, the test case is a failure.
+
+  Some of the tests, esp. the ones that expect a driver
+call (e.g. open()) to fail, require the driver to have
+passed a basic open-write-read-close cycle test first
+to ensure that the driver isn't just completely broken
+and saying no to everything.
+
+
+
+Testing (failure details below (/home/pn-cs453/lib/asgn4//testlib/Tests)):
+        -----
+         1) Just start the driver                         ... ok.
+         2) Write once, read once                         ... ok.
+         3) Write once, read many                         ... ok.
+         4) Write many, read once                         ... ok.
+         5) Start, restart, update                        ... ok.
+         6) Write, read, twice                            ... ok.
+         7) Attempt to open as good user (different gid)  ... ok.
+         8) Attempt to open as bad user (uid only)        ... ok.
+         9) Attempt to open as bad user (uid & gid)       ... ok.
+        10) Attempt to re-read a secret                   ... ok.
+        11) Read an unowned secret                        ... ok.
+        12) Reopen for writing                            ... ok.
+        13) Reopen for reading                            ... ok.
+        14) Write a big secret                            ... ok.
+        15) Write a big secret, then more                 ... ok.
+        16) write/read a secret, reset, do it again       ... ok.
+        17) write big read small                          ... ok.
+        18) Test live update                              ... ok.
+        19) nonstring data                                ... ok.
+        20) Open for read and write                       ... ok.
+        21) Open for read and write and append            ... ok.
+        22) Open for read and append                      ... ok.
+        23) Open for write and append                     ... ok.
+        24) Test ioctl handoff                            ... ok.
+        25) Test bad ioctl                                ... ok.
+        26) Test reset when only opened for reading       ... ok.
+        27) Safety after long seek: write                 ... ok.
+        28) Safety after long seek: read                  ... ok.
+        -----
+Success. (28/28 passed)
+

@@ -1,0 +1,426 @@
+#!/bin/csh -f 
+
+set class=cpe453
+set classdir=pn-cs453
+set asgn=asgn4
+set maketarget="Secret Keeper"
+if ( ! $?TMPDIR ) then
+    set tmpdir=tmpdir.$$
+else
+    set tmpdir=$TMPDIR
+endif
+set verb=0
+
+if ( $#argv ) then
+  foreach flag ( $argv ) 
+    if ( "$flag" == "-v" ) then
+      set verb=1
+    else if ( "$flag" == "-h") then
+      echo "usage $0 [ -v ] driverfile"
+      exit (-1)
+    else
+      if ( $?drvfile ) then
+        echo "usage $0 [ -v ] driverfile"
+        exit (-1)
+      else
+        set drvfile="$flag"
+      endif
+    endif
+  end
+endif
+
+if ( `hostname` == "aloha.home" || `hostname -s` == "tallac" ) then
+  set lib=$HOME/CalPoly/Class/$class/now/Asgn/Handin/lib/$asgn
+  set logprog=/bin/true
+  set longlines=$HOME/bin/longlines.pl
+else
+  if ( -d $classdir/bin ) then
+    set path=($path $classdir/bin )
+  endif
+  if ( -d ~pnico/bin ) then
+    set path=($path ~pnico/bin )
+  endif
+  set lib=/home/$classdir/lib/$asgn/
+  set logprog=/home/$classdir/bin/logit.$asgn
+  set longlines=/home/$classdir/bin/longlines.pl
+endif
+
+set testdir=$lib/testlib/Tests
+set exitstatus = 0
+set which = -1
+onintr bail
+
+
+if ( $?GRADINGMODE ) then
+  echo "(Grading mode.  Skipping build.)"
+else
+  # Only try to build if GRADINGMODE isn't set
+  if ( $exitstatus == 0 ) then
+    echo ""
+    echo "------------------------"
+    echo "Looking for source files"
+    echo "------------------------"
+    echo ""
+
+    set nonomatch
+    set src = ( *.[ch] )
+    if ( "$src" != '*.[ch]' ) then
+
+      echo "Found: $src"
+    else
+      echo "***** No C source files found. " 
+      echo "***** Are you sure you're in the right directory?"
+      echo ""
+      set exitstatus = -1
+    endif
+  endif
+
+  if ( $exitstatus == 0 ) then
+    echo ""
+    echo "------------------------------"
+    echo "Attempting to build the driver"
+    echo "------------------------------"
+    echo ""
+
+    if ( ! $?drvfile ) then
+      set drvfile = `grep -l 'driver_task[    ]*(' *c`
+    endif
+
+    if ( $verb ) then
+      echo lib: $lib
+      echo tmpdir: $tmpdir
+      echo drvfile: $drvfile
+    endif
+
+#    set tmpdir=tmp  # PLN
+
+    if ( $#drvfile != 1 ) then
+       echo "Either failed to find driver file or found too many."
+       echo "(The driver file is found by grepping for driver_task.)"
+       echo ""
+       echo "Found: $drvfile."
+       echo ""
+       echo "Try re-running with the filename: "\"tryAsgn4 driverfile\".
+       echo ""
+       exit 1
+    endif
+       
+    set cmd=(make -f $lib/Makefile.driver CC=/bin/gcc LIBDIR=$lib/testlib TMPDIR=$tmpdir SRCS=$drvfile )
+    if ( -f Make.extra ) then
+	set cmd=( $cmd `cat Make.extra` )
+    endif
+    
+    if ( $verb ) then
+      echo $cmd
+    endif
+
+    # Do it
+    $cmd
+
+    if ( $exitstatus == 0 ) then
+	echo ""
+	echo "--------------------------------"
+	    echo "Checking for long lines (no program should have any lines > 80 chars)"
+	echo "--------------------------------"
+	echo ""
+	if ( ! { $longlines $src } ) then
+	    if ( ! $?GRADINGMODE ) then
+		set exitstatus=-3
+	    endif
+	else
+	    echo "Line length ok."
+	endif
+	echo ""
+    endif
+  endif # PLN
+    
+  if ( $exitstatus == 0 ) then
+    echo ""
+    echo "---------------"
+    echo "checking for $tmpdir/lib/libsubmitted.so"
+    echo "---------------"
+    echo ""
+
+    if ( ! -f $tmpdir/lib/libsubmitted.so ) then
+      echo "$tmpdir/lib/libsubmitted.so not found"
+      set exitstatus = -5
+    endif
+  endif
+endif
+
+#===================================================================
+#below this is where most customization should happen
+#===================================================================
+
+# if ( $exitstatus == 0 ) then
+#   #First, convert the given static library into a dynamic one
+#   set srclib=liblwp.a
+#   set dstlib=$srclib:r.so
+
+#   if ( ! -f $srclib ) then
+#     echo ""
+#     echo "Unable to locate $srclib."
+#     echo ""
+#     @ exitstatus++
+#   else
+#     # try and build the shared library
+#     if ( ! -d $tmpdir ) then
+#       mkdir $tmpdir
+#     endif
+
+#     cd $tmpdir
+#     if ( ! { ar x ../$srclib } ) then
+#       echo ""
+#       echo "Unable to extract objects from $srclib."
+#       echo ""
+#       @ exitstatus++
+#     else
+#       if ( { ( file *.o | grep -q 64-bit ) > /dev/null } ) then
+#         echo ""
+#         echo "*** Found 64-bit object(s) in $srclib.  Be sure you are compiling"
+#         echo "    with -m32."
+#         echo ""
+# 	@ exitstatus++
+#       else if ( ! { gcc -m32 -shared -o $dstlib *.o } ) then
+#         echo ""
+#         echo "Unable to build $dstlib."
+#         echo ""
+#         @ exitstatus++
+#       endif
+#     endif
+#   endif
+# endif
+
+# test it.
+
+if ( ! -f $PWD/$tmpdir/lib/libsubmitted.so ) then
+  echo ""
+  echo "Submitted driver failed to build into library.  Unable to test."
+  echo ""
+  set exitstatus=-4
+endif
+
+    # LD_LIBRARY_PATH for use below
+
+if ( $exitstatus == 0 ) then
+  echo ""
+  echo "--------------------------------------------------------"
+  echo "Test Results:"
+  echo "   These are the results of trying your $maketarget"   
+  echo "against several programs with different characteristics "     
+  echo "described by the filename.  The output of your program"
+  echo "is compared to a reference output using diff(1).  If they"
+  echo "differ, the test case is a failure."
+  echo ""
+  echo "  Some of the tests, esp. the ones that expect a driver"
+  echo "call (e.g. open()) to fail, require the driver to have"
+  echo "passed a basic open-write-read-close cycle test first"
+  echo "to ensure that the driver isn't just completely broken"
+  echo "and saying no to everything."
+  echo ""
+  echo ""
+
+
+  #===================================================================
+
+  set detailfile=$tmpdir/DETAILS
+
+  # time out after 1 minute
+  set timeout=15
+  set maxchars=16384
+  set iolimit=$maxchars
+  set sfile=t_script.$$
+
+  limit filesize 1M
+  limit coredumpsize 1M
+
+
+  set newlibs=$PWD/$tmpdir/lib:$lib/testlib/lib
+  if ( $?LD_LIBRARY_PATH ) then
+     set libpath={$newlibs}:{$LD_LIBRARY_PATH}
+  else 
+     set libpath={$newlibs}
+  endif
+
+  if ( -f $detailfile ) then
+    mv $detailfile $detailfile.bak
+    touch $detailfile
+  endif
+
+  #Now perform the tests if all is well
+  set passed=0
+  set tests=0
+  set this=1
+  set which=0
+
+  if ( ! $exitstatus ) then
+    setenv LD_LIBRARY_PATH $libpath
+    
+    echo ""
+    echo "Testing (failure details below ($testdir)):"
+    echo "        -----"
+    foreach testdir ( $testdir/[0-9]* ) 
+#    foreach testdir ( $testdir/01* ) 
+      if ( ! -d $testdir ) continue
+
+      @ tests++
+      set prog = $testdir:t
+      set refout  = $testdir/$prog.out
+      set referr  = $testdir/$prog.err
+      set refcon  = $testdir/$prog.con
+      set out  = $prog.out 
+      set err  = $prog.err
+      set con  = $prog.con 
+      set tty  = $prog.tty
+      if ( -f $testdir/Description ) then
+         set title=`head -1 $testdir/Description`
+      else 
+         set title=$prog
+      endif
+      printf "        %2d) %-45.45s ... " $tests "$title"
+
+      # run the command
+      set cmd = "$testdir/$prog -a $timeout -b $iolimit -o $out -e $err -c $con"
+#PLN echo "CMD $cmd"
+      if ( ! { scriptwrap2 -f $tty -q $cmd } ) then
+        echo "Bad exit status ($status)" >> $err
+      endif
+
+      if ( { ( diff $refout $out > /dev/null ) } && -z $err ) then 
+          echo "ok."                                
+          @ passed++
+	  set showres=0
+       else                                                  
+          echo "FAILURE."                           
+          @ exitstatus++;
+          @ which += $this
+	  set showres=1
+       endif
+
+       if ( $showres || $?SHOWALL ) then
+	 # on failure, preserve the details
+         echo "=================================================" >> $detailfile
+  	 echo -n "TEST "$tests": "		   >> $detailfile
+         if ( -f $testdir/Description ) then
+             cat $testdir/Description >> $detailfile
+         else 
+             echo $title >> $detailfile
+         endif
+  	 echo ""		   >> $detailfile
+  	 echo "----------" >> $detailfile
+  	 echo "Reference:"   >> $detailfile
+  	 echo "----------" >> $detailfile
+      	 if ( ! -z $refcon ) then
+      	   echo "console:" >> $detailfile
+      	   cat $refcon | sed 's/^/  /' >> $detailfile
+           else
+      	   echo "Reference produced no console output." >> $detailfile
+      	 endif
+      	 if ( ! -z $refout ) then
+      	   echo "stdout:" >> $detailfile
+      	   cat $refout | sed 's/^/  /' >> $detailfile
+           else
+      	   echo "Reference produced no standard output." >> $detailfile
+      	 endif
+      	 if ( ! -z $referr ) then
+      	   echo "stderr:" >> $detailfile
+      	   cat $referr | sed 's/^/  /' >> $detailfile
+           else
+      	   echo "Reference produced no error output." >> $detailfile
+      	 endif
+
+  	 echo "----------" >> $detailfile
+  	 echo "Submitted:"   >> $detailfile
+  	 echo "----------" >> $detailfile
+      	 if ( ! -z "$con" ) then
+      	   echo "console:" >> $detailfile
+      	   cat "$con" | sed 's/^/  /' >> $detailfile
+           else
+      	   echo "Submitted produced no console output." >> $detailfile
+      	 endif
+      	 if ( ! -z "$out" ) then
+      	   echo "stdout:" >> $detailfile
+      	   cat "$out" | sed 's/^/  /' >> $detailfile
+           else
+      	   echo "Submitted produced no standard output." >> $detailfile
+      	 endif
+      	 if ( ! -z "$err" ) then
+      	   echo "stderr:" >> $detailfile
+      	   cat "$err" | sed 's/^/  /' >> $detailfile
+           else
+      	   echo "Submitted produced no error output." >> $detailfile
+      	 endif
+      	 if ( ! -z "$tty" ) then
+      	   echo "tty:" >> $detailfile
+      	   cat "$tty" | sed 's/^/  /' >> $detailfile
+           else
+      	   echo "Submitted produced no error output." >> $detailfile
+      	 endif
+
+  	 echo ""		   >> $detailfile
+  	 echo "---------------------------------" >> $detailfile
+  	 echo "Stdout differences (< reference > output)"   >> $detailfile
+  	 echo "---------------------------------" >> $detailfile
+  	 echo ""		   >> $detailfile
+           diff $refout $out >> $detailfile
+  	 echo "---------"   >> $detailfile
+      endif
+      rm -f $out $err $con $tty
+      @ this *= 2
+    end
+  endif
+
+  echo "        -----"
+  if ( ! $exitstatus ) then
+    echo "Success. ($passed/$tests passed)"
+  else
+    echo "FAILURE. ($passed/$tests passed)"
+  endif
+  echo ""
+
+  # check for corefiles
+
+  set cores = `ls | egrep '^core(\.[0-9]+)?$'`
+  if ( $#cores ) then
+     echo ""                                      
+     echo "----------------------------"          
+     if ( $#cores == 1 ) then       
+       echo $#cores" Corefile Present:"           
+     else
+       echo $#cores" Corefile(s) Present:"        
+     endif
+     foreach f ( $cores ) 
+       echo "    $f"                              
+     end
+     echo "----------------------------"          
+     echo ""                                      
+  endif
+
+
+  if ( $passed != $tests || $?SHOWALL ) then
+    echo ""
+    echo "-----------------------------------------------------------------"
+    echo "Failure Details"
+    echo "-----------------------------------------------------------------"
+    cat $detailfile
+  endif
+endif
+#===================================================================
+
+goto done
+
+bail:
+  echo "Interrupted."
+  set exitstatus=-7
+  
+done:
+
+if ( ! $?SAVEOUTPUT && ! $?GRADINGMODE ) then
+    rm -rf $tmpdir
+endif
+
+if ( -x $logprog ) then
+  $logprog $exitstatus $which
+endif
+
+exit $exitstatus
