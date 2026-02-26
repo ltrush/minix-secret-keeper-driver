@@ -1,8 +1,3 @@
-/**
- * TO DO:
- * check return values of system calls
- */
-
 #include <minix/drivers.h>
 #include <minix/driver.h>
 #include <minix/const.h>
@@ -11,8 +6,8 @@
 #include <stdlib.h>
 #include <minix/ds.h>
 #include <sys/ucred.h>
-#include <sys/socket.h>
 #include <unistd.h>
+#include <sys/ioc_secret.h>
 #include <stdint.h>
 #include "secret.h"
 
@@ -251,6 +246,7 @@ PRIVATE int sef_cb_lu_state_save(int state) {
     my_state_vars.opened_for_read = opened_for_read;
     my_state_vars.read_end = read_end;
     my_state_vars.write_end = write_end;
+    /* man pages indicates I shouldn't check return value of memcpy! */
     memcpy(my_state_vars.secret, secret, SECRET_SIZE);
 
     ds_publish_mem(STATE_VARS_NAME, (void *)&my_state_vars, 
@@ -263,7 +259,7 @@ PRIVATE int lu_state_restore() {
     /* Restore the state. */
     struct state_vars my_state_vars;
     /* ds_retrieve_mem modifies size, so need to have a variable */
-    uint32_t state_vars_size = sizeof(my_state_vars);
+    size_t state_vars_size = sizeof(my_state_vars);
 
     ds_retrieve_mem(STATE_VARS_NAME, (char *)&my_state_vars, 
                                                  &state_vars_size);
