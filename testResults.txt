@@ -9,9 +9,9 @@ Found: secret.c secret.h
 Attempting to build the driver
 ------------------------------
 
-mkdir tmpdir.42825
-/bin/gcc -Wall -fpic -g -m32 -I/home/pn-cs453/lib/asgn4//testlib/include  -include pln.h -o tmpdir.42825/secret.o -c -Dmain=test453main -Dprintf=dt_printf  secret.c
-/bin/gcc -Wall -fpic -g -m32 -I/home/pn-cs453/lib/asgn4//testlib/include  -include pln.h -shared -o tmpdir.42825/lib/libsubmitted.so tmpdir.42825/secret.o
+mkdir tmpdir.32160
+/bin/gcc -Wall -fpic -g -m32 -I/home/pn-cs453/lib/asgn4//testlib/include  -include pln.h -o tmpdir.32160/secret.o -c -Dmain=test453main -Dprintf=dt_printf  secret.c
+/bin/gcc -Wall -fpic -g -m32 -I/home/pn-cs453/lib/asgn4//testlib/include  -include pln.h -shared -o tmpdir.32160/lib/libsubmitted.so tmpdir.32160/secret.o
 
 --------------------------------
 Checking for long lines (no program should have any lines > 80 chars)
@@ -21,7 +21,7 @@ Line length ok.
 
 
 ---------------
-checking for tmpdir.42825/lib/libsubmitted.so
+checking for tmpdir.32160/lib/libsubmitted.so
 ---------------
 
 

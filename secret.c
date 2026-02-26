@@ -1,9 +1,4 @@
 /**
- * QUESTIONS:
- * check the return value of the ds_publish_xxx, ds_retrieve_xxx functions?
- * can i just use ds_publish_u32 for all my ints instead of ds_publish_mem
- * can i have one line if statements
- * what to do about geometery and prepare
  * TO DO:
  * check return values of system calls
  */
@@ -28,6 +23,8 @@
 #define FALSE 0
 #define TRUE 1
 
+#define STATE_VARS_NAME "my_state_vars"
+
 /*
  * Function prototypes for the secret driver.
  */
@@ -40,8 +37,6 @@ FORWARD _PROTOTYPE( int secret_transfer,  (int procnr, int opcode,
                                           u64_t position, iovec_t *iov,
                                           unsigned nr_req) );
 FORWARD _PROTOTYPE( void secret_geometry, (struct partition *entry) );
-FORWARD _PROTOTYPE( void ret_and_del_u32_ds, 
-                                    (const char *ds_name, uint32_t *value));
 
 /* SEF functions and variables. */
 FORWARD _PROTOTYPE( void sef_local_startup, (void) );
@@ -50,12 +45,11 @@ FORWARD _PROTOTYPE( int sef_cb_lu_state_save, (int) );
 FORWARD _PROTOTYPE( int lu_state_restore, (void) );
 
 /* Entry points to the secret driver. */
-PRIVATE struct driver secret_tab =
-{
+PRIVATE struct driver secret_tab = {
     secret_name,
     secret_open,
     secret_close,
-    secret_ioctl, // this is the real nop_ioctl
+    secret_ioctl,
     secret_prepare,
     secret_transfer,
     nop_cleanup,
@@ -63,57 +57,69 @@ PRIVATE struct driver secret_tab =
     nop_alarm,
     nop_cancel,
     nop_select,
-    nop_ioctl,  // this one is a mistake??
+    nop_ioctl,
     do_nop,
+};
+
+/* used to save state for a live update */
+struct state_vars {
+    int open_counter;
+    uid_t owner;
+    int owned;
+    int opened_for_read;
+    uint8_t secret[SECRET_SIZE];
+    uint8_t *read_end;
+    uint8_t *write_end;
 };
 
 /** Represents the /dev/secret device. */
 PRIVATE struct device secret_device;
 
-/** State variable to count the number of times the device has been opened. */
-PRIVATE int open_counter;
-PRIVATE uid_t owner;
-PRIVATE int owned = FALSE;
-PRIVATE int opened_for_read = FALSE;
 
-PRIVATE uint8_t secret[SECRET_SIZE];
-PRIVATE uint8_t *read_end = secret;
-PRIVATE uint8_t *write_end = secret;
+PRIVATE int open_counter; /** count times the device has been opened */
+PRIVATE uid_t owner; /* who currently owns the secret */
+PRIVATE int owned = FALSE; /* is the secret owned */
+PRIVATE int opened_for_read = FALSE; /* has the secret been opened for read */
 
-// do we need this function and if not then do i get 
-// rid of it in the table or replace it with a nop
+PRIVATE uint8_t secret[SECRET_SIZE]; /* buffer for the secret */
+PRIVATE uint8_t *read_end = secret; /* where to get bytes for reading */
+PRIVATE uint8_t *write_end = secret; /* where to put bytes for writing */
+
 PRIVATE char * secret_name(void) {
     printf("secret_name()\n");
     return "secret";
 }
 
-// is it okay to change the function to look like this? thats just C right
 PRIVATE int secret_open(struct driver *d, message *m) {
     int read, write; 
     struct ucred caller;
 
+    /* see who tried to open */
     if (getnucred(m->IO_ENDPT, &caller) == -1) {
         perror("getnucred");
-        return errno; // is this the correct behavior for if getnucred fails?
+        return EACCES;
     }
     
+    /* are they asking for read or write permissions? or both? */
     read = m->COUNT & R_BIT;
     write = m->COUNT & W_BIT;
 
     if (read && write) {
-        return EACCES; /* can't open for read and write access */
+        return EACCES; /* can't open for read AND write access */
     } else if (write) {
-        printf("owned is %d\n", owned);
-        if (owned) return ENOSPC; /* can't open for write if secret is full */
+        if (owned) {
+            return ENOSPC; /* can't open for write if secret is full */
+        }
     } else if (read) {
         /* can read if not owned or if user is owner */
-        if (owned && caller.uid != owner) return EACCES;
+        if (owned && caller.uid != owner) {
+            return EACCES;
+        }
         opened_for_read = TRUE;
     } else {
         /* open() should require one of O_RDONLY, O_WRONLY, or O_RDWR
          * but I'd rather be safe then sorry
          */
-        printf("open() not given an access mode\n");
         return EACCES;
     }
 
@@ -122,16 +128,15 @@ PRIVATE int secret_open(struct driver *d, message *m) {
     owned = TRUE;
     open_counter++;
 
-    printf("secret_open(). Called %d time(s).\n", open_counter);
     return OK;
 }
 
 PRIVATE int secret_close(struct driver * d, message *m) {
-    printf("secret_close()\n");
     open_counter--;
-    printf("open_counter %d\n", open_counter);
     if (open_counter == 0 && opened_for_read) {
-        printf("secreet is no longer owned\n");
+        /* someone has opened for read and now all FDs are closed
+         * so we reset the secret
+         */
         owned = FALSE;
         opened_for_read = FALSE;
         read_end = secret;
@@ -144,22 +149,24 @@ PRIVATE int secret_ioctl(struct driver * d, message *m) {
     int res;
     uid_t grantee; /* the uid of the new owner of the secret */
 
-    if (m->REQUEST != SSGRANT) return ENOTTY;
+    /* only allow one type of ioctl request */
+    if (m->REQUEST != SSGRANT) {
+        return ENOTTY;
+    }
+
+    /* who are we changing ownership to? */
     res = sys_safecopyfrom(m->IO_ENDPT, (vir_bytes)m->IO_GRANT,
                     0, (vir_bytes)&grantee, sizeof(grantee), D);
 
-    // is this apporaite for checking sys_safecopyfrom
-    // in secret_transfer we just return res, should we do that instead?
     if (res != OK) {
         perror("sys_safecopyfrom");
-        return errno;
+    } else {
+        owner = grantee;
     }
 
-    owner = grantee;
-    return OK;
+    return res;
 }
 
-// not sure what we're supposed to do with this
 PRIVATE struct device * secret_prepare(int dev) {
     secret_device.dv_base.lo = 0;
     secret_device.dv_base.hi = 0;
@@ -171,45 +178,55 @@ PRIVATE struct device * secret_prepare(int dev) {
 PRIVATE int secret_transfer(int proc_nr, int opcode, u64_t position, 
                                         iovec_t *iov, unsigned nr_req) {
     int ret, bytes_avaliable, bytes_requested, bytes_to_transfer;
-
-    printf("secret_transfer()\n");
                         
     bytes_requested = iov->iov_size;
 
-    // I BELIEVE IF usr TRY WRITE ZERO BYTES IT SHOULDNT FAIL Jus RET
-    if (bytes_requested == 0) return OK;
-                
-    /* if reading, get bytes avaliable to read
-     * otherwise get bytes left for write
-     */
-    if (opcode == DEV_GATHER_S) bytes_avaliable = write_end - read_end;
-    else bytes_avaliable = (secret + SECRET_SIZE) - write_end;
+    /* if user writes/reads zero bytes, just say OK! */
+    if (bytes_requested == 0) {
+        return OK;
+    }
+
+    if (opcode == DEV_GATHER_S) {
+        /* if reading, get bytes avaliable to read */
+        bytes_avaliable = write_end - read_end;
+    }
+    else {
+        /* otherwise get bytes left for write */
+        bytes_avaliable = (secret + SECRET_SIZE) - write_end;
+    }
 
     /* will transfer min(bytes_avaliable, bytes_requested) */
     bytes_to_transfer = bytes_avaliable <= bytes_requested 
                             ? bytes_avaliable : bytes_requested;
-    
-    printf("bytes_to_transfer: %d\n", bytes_to_transfer);
 
     switch (opcode) {
         case DEV_GATHER_S:
-            // is this the correct behavior??
-            if (bytes_to_transfer <= 0) return OK; 
+            /* nothing left to read */
+            if (bytes_to_transfer <= 0) {
+                return OK; 
+            }
             ret = sys_safecopyto(proc_nr, iov->iov_addr, 0,
                                 (vir_bytes) read_end,
                                  bytes_to_transfer, D);
-            iov->iov_size -= bytes_to_transfer;
-            read_end += bytes_to_transfer;
+            if (ret == OK) {
+                iov->iov_size -= bytes_to_transfer;
+                /* move read pointer */
+                read_end += bytes_to_transfer;
+            }
             break;
         
         case DEV_SCATTER_S:
-            if (bytes_to_transfer <= 0) return ENOSPC;
+            if (bytes_to_transfer <= 0) {
+                return ENOSPC;
+            }
             ret = sys_safecopyfrom(proc_nr, iov->iov_addr, 0,
                                 (vir_bytes) write_end,
                                  bytes_to_transfer, D);
-            printf("iov->iov_size: %d\n", iov->iov_size);
-            iov->iov_size -= bytes_to_transfer;
-            write_end += bytes_to_transfer;
+            if (ret == OK) {
+                iov->iov_size -= bytes_to_transfer;
+                /* move write pointer */
+                write_end += bytes_to_transfer;
+            }
             break;
         default:
             return EINVAL;
@@ -218,10 +235,7 @@ PRIVATE int secret_transfer(int proc_nr, int opcode, u64_t position,
     return ret;
 }
 
-// what to do with this?
-PRIVATE void secret_geometry(entry)
-    struct partition *entry;
-{
+PRIVATE void secret_geometry(struct partition * entry) {
     printf("secret_geometry()\n");
     entry->cylinders = 0;
     entry->heads     = 0;
@@ -229,56 +243,44 @@ PRIVATE void secret_geometry(entry)
 }
 
 PRIVATE int sef_cb_lu_state_save(int state) {
-/* Save the state. */
-    ds_publish_u32("open_counter", open_counter, DSF_OVERWRITE);
-    ds_publish_u32("owner", owner, DSF_OVERWRITE);
-    ds_publish_u32("owned", owned, DSF_OVERWRITE);
-    ds_publish_u32("opened_for_read", opened_for_read, DSF_OVERWRITE);
-    ds_publish_mem("secret", (void *)secret, SECRET_SIZE, DSF_OVERWRITE);
-    ds_publish_u32("read_end", (uint32_t) read_end, DSF_OVERWRITE);
-    ds_publish_u32("write_end", (uint32_t) write_end, DSF_OVERWRITE);
+    /* Save the state. */
+    struct state_vars my_state_vars;
+    my_state_vars.open_counter = open_counter;
+    my_state_vars.owner = owner;
+    my_state_vars.owned = owned;
+    my_state_vars.opened_for_read = opened_for_read;
+    my_state_vars.read_end = read_end;
+    my_state_vars.write_end = write_end;
+    memcpy(my_state_vars.secret, secret, SECRET_SIZE);
+
+    ds_publish_mem(STATE_VARS_NAME, (void *)&my_state_vars, 
+                            sizeof(my_state_vars), DSF_OVERWRITE);
 
     return OK;
 }
 
 PRIVATE int lu_state_restore() {
-/* Restore the state. */
-    uint32_t value;
-    uint32_t secret_size = SECRET_SIZE; // ds_retreive_mem 
-    // changes value of secret_size to be what it actually retrieved.... 
-    // is this needed for something?
+    /* Restore the state. */
+    struct state_vars my_state_vars;
+    /* ds_retrieve_mem modifies size, so need to have a variable */
+    uint32_t state_vars_size = sizeof(my_state_vars);
 
-    ret_and_del_u32_ds("open_counter", &value);
-    open_counter = (int) value;
-
-    ret_and_del_u32_ds("owner", &value);
-    owner = (uid_t) value;
-
-    ret_and_del_u32_ds("owned", &value);
-    owned = (int) value;
-
-    ret_and_del_u32_ds("opened_for_read", &value);
-    opened_for_read = (int) value;
-
-    ret_and_del_u32_ds("read_end", &value);
-    read_end = (uint8_t*) value;
-
-    ret_and_del_u32_ds("write_end", &value);
-    write_end = (uint8_t*) value;
-
-    ds_retrieve_mem("secret", (char *)secret, &secret_size);
-    ds_delete_mem("secret");
+    ds_retrieve_mem(STATE_VARS_NAME, (char *)&my_state_vars, 
+                                                 &state_vars_size);
+    ds_delete_mem(STATE_VARS_NAME);
+    
+    open_counter = my_state_vars.open_counter;
+    owner = my_state_vars.owner;
+    owned = my_state_vars.owned;
+    opened_for_read = my_state_vars.opened_for_read;
+    read_end = my_state_vars.read_end;
+    write_end = my_state_vars.write_end;
+    memcpy(secret, my_state_vars.secret, SECRET_SIZE);
 
     return OK;
 }
 
-PRIVATE void ret_and_del_u32_ds(const char *ds_name, uint32_t *value) {
-    ds_retrieve_u32(ds_name, value);
-    ds_delete_u32(ds_name);
-}
-
-PRIVATE void sef_local_startup()
-{
+PRIVATE void sef_local_startup() {
     /*
      * Register init callbacks. Use the same function for all event types
      */
@@ -300,23 +302,22 @@ PRIVATE void sef_local_startup()
     sef_startup();
 }
 
-PRIVATE int sef_cb_init(int type, sef_init_info_t *info)
-{
+PRIVATE int sef_cb_init(int type, sef_init_info_t *info) {
 /* Initialize the secret driver. */
-    // int do_announce_driver = TRUE;
+    int do_announce_driver = TRUE;
 
     open_counter = 0;
     switch(type) {
         case SEF_INIT_FRESH:
-            printf("fresh init\n");
+            printf("Fresh init\n");
         break;
 
         case SEF_INIT_LU:
             /* Restore the state. */
             lu_state_restore();
-            // do_announce_driver = FALSE;
+            do_announce_driver = FALSE;
 
-            printf("%sHey, I'm a new version!\n");
+            printf("Hey, I'm a new version!\n");
         break;
 
         case SEF_INIT_RESTART:
@@ -325,17 +326,15 @@ PRIVATE int sef_cb_init(int type, sef_init_info_t *info)
     }
 
     /* Announce we are up when necessary. */
-    // if (do_announce_driver) {
-    //     driver_announce();
-    // }
-    // dont need this??
+    if (do_announce_driver) {
+        driver_announce();
+    }
 
     /* Initialization completed successfully. */
     return OK;
 }
 
-PUBLIC int main(int argc, char **argv)
-{
+PUBLIC int main(int argc, char **argv) {
     /*
      * Perform initialization.
      */
