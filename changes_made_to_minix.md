@@ -1,5 +1,3 @@
-Luke Trusheim (ltrushei)
-
 Changes to Minix
 1) I added secret to /etc/system.conf. I copied the hello service exactly and only changed the name.
 2) I created a secret device with mknod /dev/Secret c 20 0.
@@ -8,7 +6,7 @@ Changes to Minix
 5) Then I created <sys/ioc_secret.h> which has the lines
     - #include <minix/ioctl.h>
     - #define SSGRANT _IOW('K', 1, uid_t)
-6) Then I ran copied these files to /usr/include/sys/ with
+6) Then I copied these files to /usr/include/sys/ with
     - cp /usr/src/include/sys/ioc_secret.h /usr/include/sys/
     - cp /usr/src/include/sys/ioctl.h /usr/include/sys/
 7) I then edited /usr/src/drivers/Makefile and added secret and ran make
